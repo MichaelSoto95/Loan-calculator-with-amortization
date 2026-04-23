@@ -30,12 +30,13 @@
 <div class="container">
     <div class="panel">
         <h2>Loan Architect</h2>
-        <label>Home Price ($)</label><input type="number" id="price" value="300000">
-        <label>Down Payment ($)</label><input type="number" id="down" value="60000">
+        <label>Home Price ($)</label><input type="number" id="price" value="300000" min="0">
+        <label>Down Payment ($)</label><input type="number" id="down" value="60000" min="0">
         <label>Start Date</label><input type="date" id="startDate">
-        <label>Monthly Income ($)</label><input type="number" id="income" value="5000">
-        <label>Interest Rate (%)</label><input type="number" id="rate" value="6.5">
-        <label>Term (Years)</label><input type="number" id="years" value="30">
+        <label>Monthly Income ($)</label><input type="number" id="income" value="5000" min="0">
+        <label>Interest Rate (%)</label><input type="number" id="rate" value="6.5" min="0" step="0.01">
+        <label>Term (Years)</label><input type="number" id="years" value="30" min="1">
+        <label>Extra Monthly Payment ($)</label><input type="number" id="extra" value="0" min="0">
         <button class="btn btn-calc" onclick="compute()">Analyze Loan</button>
         <button class="btn btn-pdf" onclick="generatePDF()">Download PDF Report</button>
         <button class="btn btn-csv" onclick="downloadCSV()">Download Full CSV</button>
@@ -44,7 +45,7 @@
     <div class="panel">
         <h2>Dashboard</h2>
         <div style="display: flex; gap: 40px; margin-bottom: 20px;">
-            <div><small>Monthly Payment</small><div id="monthlyDisplay" class="big-val">$0</div></div>
+            <div><small>Monthly Payment</small><div id="monthlyDisplay" class="big-val">$0.00</div></div>
             <div><small>Affordability</small><div id="affordDisplay" class="big-val" style="font-size:1.2rem; margin-top:10px;">--</div></div>
         </div>
         <canvas id="loanChart" height="100"></canvas>
@@ -62,18 +63,37 @@
     let fullSchedule = [];
 
     function compute() {
-        const price = parseFloat(document.getElementById('price').value);
-        const down = parseFloat(document.getElementById('down').value);
-        const income = parseFloat(document.getElementById('income').value);
+        // Validation
+        const price = parseFloat(document.getElementById('price').value) || 0;
+        const down = parseFloat(document.getElementById('down').value) || 0;
+        const income = parseFloat(document.getElementById('income').value) || 0;
+        const rateInput = parseFloat(document.getElementById('rate').value) || 0;
+        const years = parseFloat(document.getElementById('years').value) || 0;
+        const extra = parseFloat(document.getElementById('extra').value) || 0;
         const startDate = new Date(document.getElementById('startDate').value);
-        const rate = parseFloat(document.getElementById('rate').value) / 100 / 12;
-        const n = parseFloat(document.getElementById('years').value) * 12;
+
+        if (price <= down || years <= 0) {
+            alert("Please check your Home Price, Down Payment, and Term values.");
+            return;
+        }
+
+        const rate = rateInput / 100 / 12;
+        const n = years * 12;
         const P = price - down;
-        const M = (P * rate * Math.pow(1 + rate, n)) / (Math.pow(1 + rate, n) - 1);
         
-        document.getElementById('monthlyDisplay').innerText = `$${M.toFixed(2)}`;
-        const ratio = (M / income) * 100;
-        document.getElementById('affordDisplay').innerText = ratio <= 28 ? `Healthy (${ratio.toFixed(1)}%)` : `High Risk (${ratio.toFixed(1)}%)`;
+        // Calculate Base Monthly Payment
+        let M;
+        if (rate === 0) {
+            M = P / n;
+        } else {
+            M = (P * rate * Math.pow(1 + rate, n)) / (Math.pow(1 + rate, n) - 1);
+        }
+        
+        const totalMonthlyPayment = M + extra;
+        
+        document.getElementById('monthlyDisplay').innerText = `$${totalMonthlyPayment.toFixed(2)}`;
+        const ratio = (totalMonthlyPayment / income) * 100;
+        document.getElementById('affordDisplay').innerText = income > 0 ? (ratio <= 28 ? `Healthy (${ratio.toFixed(1)}%)` : `High Risk (${ratio.toFixed(1)}%)`) : "N/A";
         document.getElementById('affordDisplay').style.color = ratio <= 28 ? '#22c55e' : '#ef4444';
 
         let bal = P;
@@ -82,23 +102,27 @@
         
         for(let i=1; i<=n; i++) {
             let interest = bal * rate;
-            let principal = M - interest;
-            bal -= principal;
-            if (bal < 0) bal = 0;
+            let principal = M - interest + extra;
+            
+            if (bal < principal) {
+                principal = bal;
+                bal = 0;
+            } else {
+                bal -= principal;
+            }
             
             let paymentDate = new Date(startDate);
             paymentDate.setMonth(paymentDate.getMonth() + i - 1);
             let dateStr = paymentDate.toLocaleDateString();
             
-            fullSchedule.push([dateStr, i, M.toFixed(2), interest.toFixed(2), principal.toFixed(2), bal.toFixed(2)]);
+            fullSchedule.push([dateStr, i, totalMonthlyPayment.toFixed(2), interest.toFixed(2), principal.toFixed(2), bal.toFixed(2)]);
             
-            // Render ALL rows to UI
-            htmlRows += `<tr><td>${dateStr}</td><td>${i}</td><td>$${M.toFixed(2)}</td><td>$${interest.toFixed(2)}</td><td>$${principal.toFixed(2)}</td><td>$${bal.toFixed(2)}</td></tr>`;
+            htmlRows += `<tr><td>${dateStr}</td><td>${i}</td><td>$${totalMonthlyPayment.toFixed(2)}</td><td>$${interest.toFixed(2)}</td><td>$${principal.toFixed(2)}</td><td>$${bal.toFixed(2)}</td></tr>`;
             
-            if (bal === 0) break;
+            if (bal <= 0) break;
         }
         document.getElementById('scheduleBody').innerHTML = htmlRows;
-        drawChart(P, M, rate, n);
+        drawChart(P, totalMonthlyPayment, rate, n);
     }
 
     function drawChart(P, M, r, n) {
@@ -106,14 +130,16 @@
         let data = [], bal = P;
         for(let i=0; i<=n; i++) {
             data.push(bal.toFixed(0));
-            bal -= (M - (bal * r));
+            let interest = bal * r;
+            bal -= (M - interest);
             if(bal < 0) bal = 0;
         }
         if(window.myChart) window.myChart.destroy();
-        window.myChart = new Chart(ctx, { type: 'line', data: { labels: Array.from({length: n+1}, (_,i) => i), datasets: [{ label: 'Balance', data: data, borderColor: '#6366f1' }] } });
+        window.myChart = new Chart(ctx, { type: 'line', data: { labels: Array.from({length: data.length}, (_,i) => i), datasets: [{ label: 'Balance', data: data, borderColor: '#6366f1' }] } });
     }
 
     function generatePDF() {
+        if(fullSchedule.length === 0) return alert("Run analysis first!");
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF();
         doc.setFontSize(18);
@@ -127,6 +153,7 @@
     }
 
     function downloadCSV() {
+        if(fullSchedule.length === 0) return alert("Run analysis first!");
         let csvContent = "data:text/csv;charset=utf-8,Date,Month,Payment,Interest,Principal,Balance\n";
         fullSchedule.forEach(row => { csvContent += row.join(",") + "\n"; });
         const encodedUri = encodeURI(csvContent);
