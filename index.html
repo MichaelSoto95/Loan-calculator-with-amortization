@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro Loan Architect</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+    <style>
+        :root { --bg: #0f172a; --panel: #1e293b; --accent: #6366f1; --text: #f1f5f9; }
+        body { font-family: 'Segoe UI', system-ui; background: var(--bg); color: var(--text); padding: 20px; margin: 0; }
+        .container { max-width: 1200px; margin: auto; display: grid; grid-template-columns: 1fr 2fr; gap: 20px; }
+        @media (max-width: 900px) { .container { grid-template-columns: 1fr; } }
+        .panel { background: var(--panel); padding: 20px; border-radius: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        input { width: 100%; padding: 10px; margin: 8px 0; background: #0f172a; border: 1px solid #334155; color: white; border-radius: 6px; box-sizing: border-box; }
+        .btn { width: 100%; padding: 12px; border: none; color: white; border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 10px; }
+        .btn-calc { background: var(--accent); }
+        .btn-pdf { background: #ef4444; }
+        .btn-csv { background: #10b981; }
+        .big-val { font-size: 1.8rem; color: #22c55e; font-weight: bold; }
+        .table-wrap { overflow-y: auto; margin-top: 20px; max-height: 500px; border: 1px solid #334155; }
+        table { width: 100%; border-collapse: collapse; color: white; font-size: 0.8rem; }
+        th { background: #334155; padding: 10px; position: sticky; top: 0; z-index: 10; }
+        td { padding: 8px; border-bottom: 1px solid #334155; text-align: right; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="panel">
+        <h2>Loan Architect</h2>
+        <label>Home Price ($)</label><input type="number" id="price" value="300000">
+        <label>Down Payment ($)</label><input type="number" id="down" value="60000">
+        <label>Start Date</label><input type="date" id="startDate">
+        <label>Monthly Income ($)</label><input type="number" id="income" value="5000">
+        <label>Interest Rate (%)</label><input type="number" id="rate" value="6.5">
+        <label>Term (Years)</label><input type="number" id="years" value="30">
+        <button class="btn btn-calc" onclick="compute()">Analyze Loan</button>
+        <button class="btn btn-pdf" onclick="generatePDF()">Download PDF Report</button>
+        <button class="btn btn-csv" onclick="downloadCSV()">Download Full CSV</button>
+    </div>
+
+    <div class="panel">
+        <h2>Dashboard</h2>
+        <div style="display: flex; gap: 40px; margin-bottom: 20px;">
+            <div><small>Monthly Payment</small><div id="monthlyDisplay" class="big-val">$0</div></div>
+            <div><small>Affordability</small><div id="affordDisplay" class="big-val" style="font-size:1.2rem; margin-top:10px;">--</div></div>
+        </div>
+        <canvas id="loanChart" height="100"></canvas>
+        <div class="table-wrap">
+            <table id="scheduleTable">
+                <thead><tr><th>Date</th><th>Month</th><th>Payment</th><th>Interest</th><th>Principal</th><th>Balance</th></tr></thead>
+                <tbody id="scheduleBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.getElementById('startDate').valueAsDate = new Date();
+    let fullSchedule = [];
+
+    function compute() {
+        const price = parseFloat(document.getElementById('price').value);
+        const down = parseFloat(document.getElementById('down').value);
+        const income = parseFloat(document.getElementById('income').value);
+        const startDate = new Date(document.getElementById('startDate').value);
+        const rate = parseFloat(document.getElementById('rate').value) / 100 / 12;
+        const n = parseFloat(document.getElementById('years').value) * 12;
+        const P = price - down;
+        const M = (P * rate * Math.pow(1 + rate, n)) / (Math.pow(1 + rate, n) - 1);
+        
+        document.getElementById('monthlyDisplay').innerText = `$${M.toFixed(2)}`;
+        const ratio = (M / income) * 100;
+        document.getElementById('affordDisplay').innerText = ratio <= 28 ? `Healthy (${ratio.toFixed(1)}%)` : `High Risk (${ratio.toFixed(1)}%)`;
+        document.getElementById('affordDisplay').style.color = ratio <= 28 ? '#22c55e' : '#ef4444';
+
+        let bal = P;
+        fullSchedule = [];
+        let htmlRows = '';
+        
+        for(let i=1; i<=n; i++) {
+            let interest = bal * rate;
+            let principal = M - interest;
+            bal -= principal;
+            if (bal < 0) bal = 0;
+            
+            let paymentDate = new Date(startDate);
+            paymentDate.setMonth(paymentDate.getMonth() + i - 1);
+            let dateStr = paymentDate.toLocaleDateString();
+            
+            fullSchedule.push([dateStr, i, M.toFixed(2), interest.toFixed(2), principal.toFixed(2), bal.toFixed(2)]);
+            
+            // Render ALL rows to UI
+            htmlRows += `<tr><td>${dateStr}</td><td>${i}</td><td>$${M.toFixed(2)}</td><td>$${interest.toFixed(2)}</td><td>$${principal.toFixed(2)}</td><td>$${bal.toFixed(2)}</td></tr>`;
+            
+            if (bal === 0) break;
+        }
+        document.getElementById('scheduleBody').innerHTML = htmlRows;
+        drawChart(P, M, rate, n);
+    }
+
+    function drawChart(P, M, r, n) {
+        const ctx = document.getElementById('loanChart').getContext('2d');
+        let data = [], bal = P;
+        for(let i=0; i<=n; i++) {
+            data.push(bal.toFixed(0));
+            bal -= (M - (bal * r));
+            if(bal < 0) bal = 0;
+        }
+        if(window.myChart) window.myChart.destroy();
+        window.myChart = new Chart(ctx, { type: 'line', data: { labels: Array.from({length: n+1}, (_,i) => i), datasets: [{ label: 'Balance', data: data, borderColor: '#6366f1' }] } });
+    }
+
+    function generatePDF() {
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+        doc.setFontSize(18);
+        doc.text("Amortization Schedule", 14, 22);
+        doc.autoTable({ 
+            startY: 30,
+            head: [['Date', 'Month', 'Payment', 'Interest', 'Principal', 'Balance']], 
+            body: fullSchedule 
+        });
+        doc.save('amortization_schedule.pdf');
+    }
+
+    function downloadCSV() {
+        let csvContent = "data:text/csv;charset=utf-8,Date,Month,Payment,Interest,Principal,Balance\n";
+        fullSchedule.forEach(row => { csvContent += row.join(",") + "\n"; });
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", "amortization_schedule.csv");
+        document.body.appendChild(link);
+        link.click();
+    }
+</script>
+</body>
+</html>
